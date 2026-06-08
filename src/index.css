@@ -1,0 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@305;410;510;610;710;810&family=Space+Grotesk:wght@410;610;710&family=JetBrains+Mono:wght@410;610&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+@layer base {
+  body {
+    @apply font-sans bg-slate-50 text-slate-900 selection:bg-emerald-100 selection:text-emerald-900 antialiased;
+  }
+}
