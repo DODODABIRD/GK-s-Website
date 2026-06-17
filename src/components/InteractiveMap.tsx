@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { Village, DistributionCenter } from "../types";
 import { Map, Pin, Warehouse, Navigation, AlertCircle, TrendingUp, Info, Globe, Plus, Check, X } from "lucide-react";
 import L from "leaflet";
+// @ts-ignore
 import "leaflet/dist/leaflet.css";
 
 interface InteractiveMapProps {
@@ -1126,7 +1127,7 @@ export default function InteractiveMap({
       {/* Footer statistics indicator */}
       <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between text-xs gap-3">
         <div className="flex items-center gap-2 text-slate-600">
-          <Navigation className="w-4 h-4 text-emerald-600 animate-spin" style={{ animationOrigin: "center", animationDuration: "5s" }} />
+          <Navigation className="w-4 h-4 text-emerald-600 animate-spin" style={{ animationDuration: "5s" } as React.CSSProperties} />
           <span>
             Menampilkan <strong className="text-slate-900">{currentFocusVillages.length} Pos Pembagian</strong> dan <strong className="text-slate-900">{currentFocusDcs.length} Depot Gudang Regional</strong> untuk wilayah {mapMode === "LOMBOK" ? "Provinsi Lombok" : "Rantai Pasok Republik Indonesia"}.
           </span>
