@@ -7,14 +7,8 @@ import * as React from "react";
 import { useState, useEffect, useRef } from "react";
 import { Village, DistributionCenter } from "../types";
 import { Map, Pin, Warehouse, Navigation, AlertCircle, TrendingUp, Info, Globe, Plus, Check, X } from "lucide-react";
-import { APIProvider, Map as GoogleMap, AdvancedMarker, useMap } from "@vis.gl/react-google-maps";
-
-const GOOGLE_MAPS_KEY =
-  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
-  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
-  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
-  "";
-const hasValidKey = Boolean(GOOGLE_MAPS_KEY) && GOOGLE_MAPS_KEY !== "YOUR_API_KEY";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 interface InteractiveMapProps {
   villages: Village[];
@@ -40,8 +34,14 @@ export default function InteractiveMap({
   onAddCustomVillage
 }: InteractiveMapProps) {
   const [mapMode, setMapMode] = useState<"LOMBOK" | "NATIONAL">("NATIONAL");
-  const [mapEngine, setMapEngine] = useState<"VECTOR" | "GOOGLE">("VECTOR");
+  const [mapEngine, setMapEngine] = useState<"VECTOR" | "LEAFLET">("LEAFLET");
   const [hoveredNode, setHoveredNode] = useState<{ id: string; name: string; type: "VILLAGE" | "DC" } | null>(null);
+
+  // Leaflet references
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<L.Marker[]>([]);
+  const polylinesRef = useRef<L.Polyline[]>([]);
 
   // Stateful Pan and Zoom for Custom Satellite Image Engine
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -200,11 +200,224 @@ export default function InteractiveMap({
     setNewLat(Number(computedLat.toFixed(4)));
   };
   
-  const handleGoogleMapClick = (ev: { detail: { latLng: google.maps.LatLngLiteral | null } }) => {
-    if (!showAddForm || !ev.detail.latLng) return;
-    setNewLng(Number(ev.detail.latLng.lng.toFixed(4)));
-    setNewLat(Number(ev.detail.latLng.lat.toFixed(4)));
-  };
+  // 1. Initialize Leaflet map instance
+  useEffect(() => {
+    if (mapEngine !== "LEAFLET" || !mapContainerRef.current) {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      return;
+    }
+
+    const initialCenter: [number, number] = mapMode === "LOMBOK" ? [-8.45, 116.3] : [-2.5, 115.0];
+    const initialZoom = mapMode === "LOMBOK" ? 10 : 5;
+
+    const instance = L.map(mapContainerRef.current, {
+      center: initialCenter,
+      zoom: initialZoom,
+      zoomControl: true,
+    });
+
+    // Elegant, fast, and completely free CartoDB Voyager raster tiles (rendered on OpenStreetMap database)
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20
+    }).addTo(instance);
+
+    mapRef.current = instance;
+
+    instance.on("click", (e) => {
+      if (showAddForm) {
+        setNewLng(Number(e.latlng.lng.toFixed(4)));
+        setNewLat(Number(e.latlng.lat.toFixed(4)));
+      }
+    });
+
+    // Sync any pre-selected coord immediately on mount
+    if (activeSelectedCoord) {
+      instance.panTo([activeSelectedCoord.lat, activeSelectedCoord.lng]);
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [mapEngine, mapMode]);
+
+  // 2. Clear & Redraw leaflet markers / polylines on state change
+  useEffect(() => {
+    const mapInstance = mapRef.current;
+    if (!mapInstance) return;
+
+    // Remove existing
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+    polylinesRef.current.forEach(p => p.remove());
+    polylinesRef.current = [];
+
+    // Draw Routing Polylines
+    currentFocusDcs.forEach((dc) => {
+      dc.assignedVillages.forEach((villageId) => {
+        const village = villages.find(v => v.id === villageId);
+        if (!village) return;
+
+        const isVilCurrent = selectedVillageId === village.id;
+        const isDcCurrent = selectedDcId === dc.id;
+        const statusMeta = getVillageStatus(village);
+
+        const isHighlighted = isVilCurrent || isDcCurrent;
+        const color = isHighlighted ? statusMeta.hex : "#64748B";
+        const weight = isHighlighted ? 4.5 : 2;
+        const opacity = isHighlighted ? 0.95 : 0.45;
+
+        // Custom path line
+        const polyline = L.polyline(
+          [
+            [dc.coordinates.lat, dc.coordinates.lng],
+            [village.coordinates.lat, village.coordinates.lng]
+          ],
+          {
+            color,
+            weight,
+            opacity,
+            dashArray: village.is3T ? "6, 6" : undefined,
+          }
+        ).addTo(mapInstance);
+
+        polylinesRef.current.push(polyline);
+      });
+    });
+
+    // Draw DCs (Gudang BULOG/Depot)
+    currentFocusDcs.forEach((dc) => {
+      const isSelected = selectedDcId === dc.id;
+      
+      const dcHtml = `
+        <div class="relative flex flex-col items-center select-none group" style="transform: translate(-35px, -30px); width: 70px; height: 60px; z-index: ${isSelected ? 1000 : 400};">
+          <div class="w-7 h-7 rotate-45 bg-slate-900 border-2 flex items-center justify-center shadow-md rounded-md mx-auto transition-all ${
+            isSelected ? "border-amber-400 scale-125 shadow-amber-500/30" : "border-slate-300 group-hover:scale-110 group-hover:border-amber-300"
+          }">
+            <span class="text-amber-400 font-mono text-[10px] font-black pointer-events-none" style="transform: rotate(-45deg); display: inline-block;">W</span>
+          </div>
+          <div class="bg-slate-950/90 backdrop-blur-sm border border-slate-800 text-amber-400 px-2 py-0.5 rounded-md text-[9px] font-black mt-2 shadow-lg tracking-tight text-center leading-tight max-w-[90px] transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 lg:opacity-0 group-hover:opacity-100'}">
+             ${dc.name.replace(" Warehouse", "").replace(" SCM Food", "").replace(" Depot", "")}
+          </div>
+        </div>
+      `;
+
+      const dcIcon = L.divIcon({
+        className: "custom-leaflet-marker-dc",
+        html: dcHtml,
+        iconSize: [2, 2],
+        iconAnchor: [1, 1],
+      });
+
+      const marker = L.marker([dc.coordinates.lat, dc.coordinates.lng], { icon: dcIcon })
+        .addTo(mapInstance)
+        .on("click", () => {
+          onSelectDc(dc.id);
+        })
+        .on("mouseover", () => {
+          setHoveredNode({ id: dc.id, name: dc.name, type: "DC" });
+        })
+        .on("mouseout", () => {
+          setHoveredNode(null);
+        });
+
+      markersRef.current.push(marker);
+    });
+
+    // Draw Villages (Outposts)
+    currentFocusVillages.forEach((v) => {
+      const isSelected = selectedVillageId === v.id;
+      const statusMeta = getVillageStatus(v);
+      const expectedDemand = v.population * v.consumptionPerCapitaKgPerDay;
+      const indexPercent = ((v.aggregateProductionKgPerDay - expectedDemand) / expectedDemand) * 100;
+      const is3TOrDeficit = v.is3T || indexPercent < -20;
+
+      const vilHtml = `
+        <div class="relative flex flex-col items-center select-none group" style="transform: translate(-35px, -35px); width: 70px; height: 70px; z-index: ${isSelected ? 1000 : 500};">
+          ${is3TOrDeficit ? '<span class="absolute top-[25px] left-1/2 -ml-2.5 w-5 h-5 bg-rose-500 rounded-full animate-ping opacity-45 pointer-events-none"></span>' : ''}
+          <div
+            class="w-5 h-5 rounded-full border-2 flex items-center justify-center shadow-md mx-auto transition-all ${
+              isSelected ? "border-[3px] border-slate-950 scale-125" : "border-white group-hover:scale-110 group-hover:border-slate-800"
+            }"
+            style="background-color: ${statusMeta.hex};"
+          >
+            ${v.is3T ? '<span class="text-[7px] text-white font-black leading-none uppercase">3T</span>' : ''}
+          </div>
+          <div class="bg-slate-950/90 backdrop-blur-sm border border-slate-800 text-white px-2 py-0.5 rounded-md text-[9px] font-bold mt-1.5 shadow-lg max-w-[85px] text-center leading-tight transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 lg:opacity-0 group-hover:opacity-100'}">
+            ${v.name.replace(" Village", "").replace(" Outpost", "")}
+          </div>
+        </div>
+      `;
+
+      const vilIcon = L.divIcon({
+        className: "custom-leaflet-marker-village",
+        html: vilHtml,
+        iconSize: [2, 2],
+        iconAnchor: [1, 1],
+      });
+
+      const marker = L.marker([v.coordinates.lat, v.coordinates.lng], { icon: vilIcon })
+        .addTo(mapInstance)
+        .on("click", () => {
+          onSelectVillage(v.id);
+        })
+        .on("mouseover", () => {
+          setHoveredNode({ id: v.id, name: v.name, type: "VILLAGE" });
+        })
+        .on("mouseout", () => {
+          setHoveredNode(null);
+        });
+
+      markersRef.current.push(marker);
+    });
+
+    // Spawn Coordinate Feedback in Leaflet Map
+    if (showAddForm) {
+      const spawnHtml = `
+        <div class="relative flex flex-col items-center select-none" style="transform: translate(-40px, -45px); width: 80px; height: 80px;">
+          <span class="absolute top-[32px] left-1/2 -ml-3 w-6 h-6 bg-rose-500 rounded-full animate-ping opacity-35 pointer-events-none"></span>
+          <div class="w-3.5 h-3.5 rounded-full bg-rose-600 border-2 border-white shadow-lg mx-auto"></div>
+          <div class="mt-1 bg-rose-955/95 text-white px-1 py-0.5 rounded text-[7px] font-black border border-rose-700 shadow whitespace-nowrap text-center">
+            Spawn: ${newLat.toFixed(2)}, ${newLng.toFixed(2)}
+          </div>
+        </div>
+      `;
+
+      const spawnIcon = L.divIcon({
+        className: "custom-leaflet-marker-spawn",
+        html: spawnHtml,
+        iconSize: [2, 2],
+        iconAnchor: [1, 1],
+      });
+
+      const marker = L.marker([newLat, newLng], { icon: spawnIcon }).addTo(mapInstance);
+      markersRef.current.push(marker);
+    }
+  }, [
+    villages,
+    dcs,
+    selectedVillageId,
+    selectedDcId,
+    showAddForm,
+    newLat,
+    newLng,
+    mapEngine,
+    mapMode,
+  ]);
+
+  // 3. Keep map focused/centered on selection changes
+  useEffect(() => {
+    const mapInstance = mapRef.current;
+    if (!mapInstance || !activeSelectedCoord) return;
+    mapInstance.panTo([activeSelectedCoord.lat, activeSelectedCoord.lng]);
+  }, [activeSelectedCoord]);
 
   const handleSubmitForm = (e: React.FormEvent) => {
      e.preventDefault();
@@ -294,21 +507,19 @@ export default function InteractiveMap({
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              🗺️ Peta Citra Satelit
+              🗺️ Citra Satelit (Siluet)
             </button>
             <button
               type="button"
-              onClick={() => setMapEngine("GOOGLE")}
-              className={`px-2.5 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                mapEngine === "GOOGLE"
+              onClick={() => setMapEngine("LEAFLET")}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                mapEngine === "LEAFLET"
                   ? "bg-white text-slate-900 shadow-sm font-black"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              📍 Google Maps Live
-              {!hasValidKey && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block animate-pulse" title="Butuh API Key" />
-              )}
+              🌐 OpenStreetMap Live
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" title="Free & Live" />
             </button>
           </div>
 
@@ -394,187 +605,17 @@ export default function InteractiveMap({
         </div>
 
         {/* Active Map Viewport */}
-        <div id="map-viewport-wrapper" className="relative w-[750px] h-[450px] bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden shadow-inner flex items-center justify-center">
-          
-          {mapEngine === "GOOGLE" ? (
-            !hasValidKey ? (
-              <div id="gmp-splash-screen" className="absolute inset-0 bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center animate-fadeIn z-10">
-                <div className="max-w-md space-y-4">
-                  <div className="w-14 h-14 bg-slate-800 rounded-2xl border border-slate-700 flex items-center justify-center mx-auto text-amber-400">
-                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold tracking-tight">Kunci API Google Maps Diperlukan</h3>
-                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                      Sistem memerlukan kunci API Google Maps Platform rahasia Anda agar dapat memicu render peta asli kepulauan Indonesia secara dinamis.
-                    </p>
-                  </div>
-                  
-                  <div className="bg-slate-950 p-4 rounded-xl text-left border border-slate-800 text-[11px] space-y-2 max-h-[180px] overflow-y-auto">
-                    <div>
-                      <strong className="text-emerald-400 block font-semibold">Langkah 1: Hubungkan Kunci API</strong>
-                      <a 
-                        href="https://console.cloud.google.com/google/maps-apis/start?utm_campaign=gmp-code-assist-ais" 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="text-amber-400 hover:underline font-mono inline-flex items-center gap-1 mt-0.5"
-                      >
-                        Mulai Google Maps Platform ↗
-                      </a>
-                    </div>
-                    <div className="border-t border-slate-800 pt-2">
-                      <strong className="text-emerald-400 block font-semibold font-sans">Langkah 2: Tambahkan Rahasia (Secret Key)</strong>
-                      <ul className="list-decimal list-inside text-slate-300 mt-1 space-y-1 leading-relaxed">
-                        <li>Buka menu <strong className="text-slate-100 font-sans font-semibold">Settings</strong> (ikon gerigi ⚙️ di kanan atas)</li>
-                        <li>Pilih tab <strong className="text-slate-100 font-sans font-semibold">Secrets</strong></li>
-                        <li>Ketik nama parameter: <code className="bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded text-rose-400 font-mono text-[9px]">GOOGLE_MAPS_PLATFORM_KEY</code></li>
-                        <li>Tempel Kunci API Anda di kolom nilai, lalu tekan <strong className="text-slate-100 font-sans font-semibold">Enter</strong></li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 flex justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setMapEngine("VECTOR")}
-                      className="bg-slate-800 border border-slate-700 hover:bg-slate-700 hover:border-slate-600 px-4 py-1.5 rounded-xl text-[11px] font-bold transition-colors cursor-pointer text-slate-200"
-                    >
-                      Tetap Gunakan Siluet SVG
-                    </button>
-                  </div>
-                </div>
+        <div id="map-viewport-wrapper" className="relative w-full aspect-[5/3] min-h-[350px] lg:min-h-[450px] bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden shadow-inner flex items-center justify-center">
+          {mapEngine === "LEAFLET" ? (
+            <div className="w-full h-full relative z-10" id="osm-map-engine-container">
+              {/* Leaflet Mount Node */}
+              <div ref={mapContainerRef} className="w-full h-full" />
+              
+              {/* Interactive Banner confirming active free GIS OpenStreetMap stream */}
+              <div className="absolute top-2 right-2 bg-slate-900/95 backdrop-blur-sm px-2.5 py-1 rounded-lg text-[8px] text-emerald-400 font-mono tracking-tight pointer-events-none z-[1000] border border-slate-800 shadow-sm animate-pulse">
+                ● WEB-GIS ACTIVE (CRS:EPSG3857)
               </div>
-            ) : (
-              <APIProvider apiKey={GOOGLE_MAPS_KEY} version="weekly">
-                <div className="w-full h-full relative" id="google-maps-engine-container">
-                  <GoogleMap
-                    defaultCenter={mapMode === "LOMBOK" ? { lat: -8.45, lng: 116.3 } : { lat: -2.5, lng: 115.0 }}
-                    defaultZoom={mapMode === "LOMBOK" ? 10 : 5}
-                    mapId="DEMO_MAP_ID"
-                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                    style={{ width: '100%', height: '450px' }}
-                    gestureHandling="cooperative"
-                    onClick={handleGoogleMapClick}
-                  >
-                    <MapCenterer selectedCoord={activeSelectedCoord} mapMode={mapMode} />
-
-                    {/* Warehouses / Distribution Center Pins */}
-                    {currentFocusDcs.map((dc) => {
-                      const isSelected = selectedDcId === dc.id;
-                      
-                      return (
-                        <AdvancedMarker
-                          key={dc.id}
-                          position={{ lat: dc.coordinates.lat, lng: dc.coordinates.lng }}
-                          onClick={() => onSelectDc(dc.id)}
-                        >
-                          <div
-                            className="relative group cursor-pointer flex flex-col items-center"
-                            style={{ width: '100px', height: '100px' }}
-                            onMouseEnter={() => setHoveredNode({ id: dc.id, name: dc.name, type: "DC" })}
-                            onMouseLeave={() => setHoveredNode(null)}
-                          >
-                            <div className={`w-8 h-8 rotate-45 bg-slate-900 border-[1.5px] flex items-center justify-center shadow-lg rounded-xl transition-transform duration-200 hover:scale-110 ${
-                              isSelected ? "border-amber-400" : "border-slate-300"
-                            }`}>
-                              <span className="text-amber-400 font-mono text-[10px] font-black -rotate-45">W</span>
-                            </div>
-                            <div className="bg-slate-950 border border-slate-800 text-amber-400 px-2 py-0.5 rounded-lg text-[9px] font-black tracking-tight mt-1.5 shadow max-w-[90px] text-center truncate">
-                              {dc.name.replace(" Warehouse", "").replace(" SCM Food", "").replace(" Depot", "").replace(" Gate", "")}
-                            </div>
-                          </div>
-                        </AdvancedMarker>
-                      );
-                    })}
-
-                    {/* Villages Pins */}
-                    {currentFocusVillages.map((v) => {
-                      const isSelected = selectedVillageId === v.id;
-                      const statusMeta = getVillageStatus(v);
-                      const expectedDemand = v.population * v.consumptionPerCapitaKgPerDay;
-                      const indexPercent = ((v.aggregateProductionKgPerDay - expectedDemand) / expectedDemand) * 100;
-
-                      return (
-                        <AdvancedMarker
-                          key={v.id}
-                          position={{ lat: v.coordinates.lat, lng: v.coordinates.lng }}
-                          onClick={() => onSelectVillage(v.id)}
-                        >
-                          <div
-                            className="relative group cursor-pointer flex flex-col items-center"
-                            style={{ width: '100px', height: '100px' }}
-                            onMouseEnter={() => setHoveredNode({ id: v.id, name: v.name, type: "VILLAGE" })}
-                            onMouseLeave={() => setHoveredNode(null)}
-                          >
-                            {(v.is3T || indexPercent < -20) && (
-                              <span className="absolute top-4 left-1/2 w-8 h-8 -ml-4 bg-rose-500 rounded-full animate-ping opacity-45 pointer-events-none" />
-                            )}
-                            <div
-                              className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shadow-md transition-transform duration-200 hover:scale-110 ${
-                                isSelected ? "border-[3px] border-slate-950 scale-110" : "border-white"
-                              }`}
-                              style={{ background: statusMeta.hex }}
-                            >
-                              {v.is3T && <span className="text-[7.5px] text-white font-black">3T</span>}
-                            </div>
-                            <div className="bg-slate-950 border border-slate-800 text-white px-2 py-0.5 rounded-lg text-[9px] font-bold tracking-tight mt-1 truncate max-w-[90px] text-center shadow-lg">
-                              {v.name.replace(" Village", "").replace(" Outpost", "")}
-                            </div>
-                          </div>
-                        </AdvancedMarker>
-                      );
-                    })}
-
-                    {/* Active routing flows */}
-                    {currentFocusDcs.map((dc) => {
-                      return dc.assignedVillages.map((villageId) => {
-                        const village = villages.find(v => v.id === villageId);
-                        if (!village) return null;
-
-                        const isVilCurrent = selectedVillageId === village.id;
-                        const isDcCurrent = selectedDcId === dc.id;
-                        const statusMeta = getVillageStatus(village);
-
-                        const isHighlighted = isVilCurrent || isDcCurrent;
-                        const color = isHighlighted ? statusMeta.hex : "#475569";
-                        const weight = isHighlighted ? 4 : 1.5;
-                        const opacity = isHighlighted ? 0.95 : 0.35;
-
-                        return (
-                          <GeoPolyline
-                            key={`${dc.id}-${village.id}`}
-                            path={[
-                              { lat: dc.coordinates.lat, lng: dc.coordinates.lng },
-                              { lat: village.coordinates.lat, lng: village.coordinates.lng }
-                            ]}
-                            strokeColor={color}
-                            strokeWeight={weight}
-                            strokeOpacity={opacity}
-                            dashed={village.is3T}
-                          />
-                        );
-                      });
-                    })}
-
-                    {/* Spawner Coordinate feedback on Google Maps */}
-                    {showAddForm && (
-                      <AdvancedMarker position={{ lat: newLat, lng: newLng }}>
-                        <div className="relative flex flex-col items-center" style={{ pointerEvents: 'none' }}>
-                          <span className="absolute top-0 left-1/2 w-10 h-10 -ml-5 bg-rose-500 rounded-full animate-ping opacity-30" />
-                          <div className="w-3.5 h-3.5 rounded-full bg-rose-600 border-2 border-white shadow-lg" />
-                          <div className="bg-rose-950 text-white px-2 py-0.5 rounded-lg text-[9px] font-black tracking-tight mt-1.5 shadow border border-rose-700 whitespace-nowrap">
-                            Spawn: {newLat.toFixed(2)}, {newLng.toFixed(2)}
-                          </div>
-                        </div>
-                      </AdvancedMarker>
-                    )}
-
-                  </GoogleMap>
-                </div>
-              </APIProvider>
-            )
+            </div>
           ) : (
             <svg
               className={`absolute inset-0 w-full h-full cursor-${isDragging ? 'grabbing' : 'grab'}`}
@@ -614,14 +655,14 @@ export default function InteractiveMap({
                 }
                 x="0"
                 y="0"
-                width="750"
-                height="450"
+                width="100%"
+                height="100%"
                 preserveAspectRatio="none"
                 opacity="0.85"
               />
 
               {/* Grid Pattern overlay for tech SCM Spheroid feel */}
-              <rect width="750" height="450" fill="url(#dotPattern)" pointerEvents="none" />
+              <rect width="100%" height="100%" fill="url(#dotPattern)" pointerEvents="none" />
 
             {/* 1. Dynamic linkage connecting warehouses to local coordinates */}
             {currentFocusDcs.map((dc) => {
@@ -740,11 +781,12 @@ export default function InteractiveMap({
                     x={x}
                     y={y - 12}
                     textAnchor="middle"
-                    className={`font-sans select-none pointer-events-none transition-all ${
+                    className={`font-sans select-none pointer-events-none transition-opacity ${
                       isSelected 
-                        ? "text-[11px] font-bold text-slate-900 font-display" 
-                        : "text-[9px] text-slate-600 font-medium"
+                        ? "text-[10px] font-bold fill-slate-950 opacity-100" 
+                        : "text-[9px] fill-slate-700 font-medium opacity-0 group-hover:opacity-100 lg:opacity-0"
                     }`}
+                    style={{ paintOrder: "stroke fill", stroke: "#F8FAFC", strokeWidth: isSelected ? 3 : 2, strokeLinejoin: "round", strokeLinecap: "round" }}
                   >
                     {v.name.replace(" Village", "").replace(" Outpost", "")}
                   </text>
@@ -805,11 +847,12 @@ export default function InteractiveMap({
                     x={x}
                     y={y - 14}
                     textAnchor="middle"
-                    className={`font-sans select-none pointer-events-none transition-all ${
+                    className={`font-sans select-none pointer-events-none transition-opacity ${
                       isSelected 
-                        ? "text-[11px] font-bold text-slate-900" 
-                        : "text-[9px] font-bold text-slate-800"
+                        ? "text-[11px] font-black fill-slate-950 opacity-100" 
+                        : "text-[9px] font-bold fill-slate-800 opacity-0 group-hover:opacity-100 lg:opacity-0"
                     }`}
+                    style={{ paintOrder: "stroke fill", stroke: "#F8FAFC", strokeWidth: isSelected ? 4 : 2.5, strokeLinejoin: "round", strokeLinecap: "round" }}
                   >
                     {dc.name.replace(" Warehouse", "").replace(" SCM Food", "").replace(" Depot", "").replace(" Gate", "")}
                   </text>
@@ -1097,82 +1140,4 @@ export default function InteractiveMap({
   );
 }
 
-function MapCenterer({ selectedCoord, mapMode }: { selectedCoord: { lat: number; lng: number } | null; mapMode: "LOMBOK" | "NATIONAL" }) {
-  const map = useMap();
-  const lastMode = useRef(mapMode);
 
-  useEffect(() => {
-    if (!map) return;
-    if (selectedCoord) {
-      map.panTo(selectedCoord);
-    }
-  }, [map, selectedCoord]);
-
-  useEffect(() => {
-    if (!map) return;
-    if (mapMode !== lastMode.current) {
-      lastMode.current = mapMode;
-      if (mapMode === "LOMBOK") {
-        map.panTo({ lat: -8.45, lng: 116.3 });
-        map.setZoom(10);
-      } else {
-        map.panTo({ lat: -2.5, lng: 115.0 });
-        map.setZoom(5);
-      }
-    }
-  }, [map, mapMode]);
-
-  return null;
-}
-
-interface GeoPolylineProps {
-  key?: string;
-  path: google.maps.LatLngLiteral[];
-  strokeColor?: string;
-  strokeOpacity?: number;
-  strokeWeight?: number;
-  dashed?: boolean;
-}
-
-function GeoPolyline({
-  path,
-  strokeColor = "#10B981",
-  strokeOpacity = 0.8,
-  strokeWeight = 3,
-  dashed = false,
-}: GeoPolylineProps) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!map) return;
-
-    const polyline = new google.maps.Polyline({
-      path,
-      strokeColor,
-      strokeOpacity: dashed ? 0 : strokeOpacity,
-      strokeWeight,
-      icons: dashed
-        ? [
-            {
-              icon: {
-                path: "M 0,-2 0,2",
-                strokeOpacity: strokeOpacity,
-                scale: 1.5,
-                strokeWeight: strokeWeight,
-              },
-              offset: "0",
-              repeat: "12px",
-            },
-          ]
-        : undefined,
-    });
-
-    polyline.setMap(map);
-
-    return () => {
-      polyline.setMap(null);
-    };
-  }, [map, path, strokeColor, strokeOpacity, strokeWeight, dashed]);
-
-  return null;
-}

@@ -1,6 +1,6 @@
 {
   "name": "Demand Mapping & Supply Chain Control Tower",
   "description": "An administrative dashboard for predictive food distribution in Indonesia's rural and 3T regions, minimizing the bullwhip effect and monitoring price volatility.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

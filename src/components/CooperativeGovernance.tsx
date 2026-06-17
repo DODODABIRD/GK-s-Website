@@ -647,7 +647,7 @@ export default function CooperativeGovernance({ villages }: CooperativeGovernanc
       
       {/* Dynamic Toast Subtitle */}
       {govToast && (
-        <div className="bg-red-650 bg-red-600 text-white px-5 py-3 text-xs font-bold animate-pulse flex items-center gap-2 border-b border-red-750">
+        <div className="bg-red-600 text-white px-5 py-3 text-xs font-bold animate-pulse flex items-center gap-2 border-b border-red-700">
           <Clock className="w-4 h-4 animate-spin shrink-0" />
           <span>ALIRAN GOBER KMP: {govToast}</span>
         </div>
@@ -997,7 +997,7 @@ export default function CooperativeGovernance({ villages }: CooperativeGovernanc
                   <div className="md:col-span-2 pt-2 text-right">
                     <button
                       type="submit"
-                      className="px-6 py-2.5 bg-red-650 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold uppercase cursor-pointer transition-all shadow-sm active:scale-95 flex items-center gap-1.5 ml-auto font-mono tracking-wider"
+                      className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold uppercase cursor-pointer transition-all shadow-sm active:scale-95 flex items-center gap-1.5 ml-auto font-mono tracking-wider"
                     >
                       <span>Simpan & Ajukan Verifikasi</span>
                     </button>
