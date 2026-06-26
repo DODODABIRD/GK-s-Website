@@ -1,0 +1,138 @@
+================================================================================
+          DOKUMENTASI SISTEM DASHBOARD LOGISTIK PANGAN KOPERASI MERAH PUTIH
+                        (UNTUK WILAYAH 3T & SEKITARNYA)
+================================================================================
+
+Aplikasi ini merupakan dashboard/terminal stasioner pintar yang dirancang khusus 
+untuk memantau, mendistribusikan, dan menyeimbangkan pasokan beras (komoditas utama) 
+di wilayah Terdepan, Tertinggal, dan Terluar (3T), khususnya Provinsi Nusa 
+Tenggara Barat. 
+
+Dengan antarmuka yang sangat intuitif, ikonik, dan mudah dibaca oleh warga lokal, 
+aplikasi ini memfasilitasi kelancaran rantai pasok (Supply Chain) dari hulu (Bulog) 
+hingga hilir (Pos Pangan Merah Putih di desa-desa).
+
+--------------------------------------------------------------------------------
+1. STRUKTUR DIREKTORI & ARSITEKTUR KODE
+--------------------------------------------------------------------------------
+
+Sistem dibangun menggunakan React 19, TypeScript, Vite, dan Tailwind CSS. 
+Berikut adalah fungsi dari berkas-berkas utama di dalam repositori ini:
+
+* /src/types.ts
+  Mendefinisikan tipe data (TypeScript interfaces) yang digunakan di seluruh 
+  aplikasi. Antara lain:
+  - `Village`: Representasi desa 3T, mencakup populasi, konsumsi per kapita, 
+    produksi panen harian, riwayat harga, tingkat cadangan logistik, dan koordinat.
+  - `DistributionCenter`: Repositori gudang/depot penampung logistik utama 
+    (dioperasikan oleh BULOG, BAPANAS, atau Koperasi Merah Putih sendiri).
+  - `TransitLog`: Riwayat perjalanan pengiriman logistik antar pulau/darat.
+
+* /src/data.ts
+  Menyimpan dataset awal (seed data) untuk seluruh Desa 3T (Pemenang, Sembalun, 
+  Gili Islet, Senggigi Coast) serta Pusat Distribusi utama di wilayah Lombok.
+
+* /src/App.tsx
+  Pusat kendali (Core Controller) aplikasi. Mengatur state global untuk:
+  - Autentikasi Admin Koperasi.
+  - Sinkronisasi data real-time lumbung pangan dan tingkat konsumsi desa.
+  - Simulasi skenario pasar (Normal, Gagal Panen, Panen Raya, dan Hari Raya).
+  - Pemicu algoritma "Automated Bullwhip Attenuation System" (Rerouting Otomatis) 
+    untuk menyeimbangkan stok kritis antar pulau secara otomatis.
+  - Mengintegrasikan semua sub-komponen visual utama.
+
+* /src/components/InteractiveMap.tsx
+  Visualisasi geospasial interaktif berbasis peta (Leaflet / Google Maps API) 
+  yang menandai level stok di setiap desa dan gudang secara real-time. 
+  Titik defisit kritis ditandai dengan warna merah pulsing.
+
+* /src/components/ScmCharts.tsx
+  Modul grafik analisis ekonomi (menggunakan Recharts) untuk memantau tren 
+  volatilitas harga beras dan keseimbangan produksi vs konsumsi di setiap titik.
+
+* /src/components/CooperativeGovernance.tsx
+  Panel administrasi tata kelola koperasi untuk mendaftarkan operator, 
+  memantau skor kepatuhan, dan memberikan keputusan strategis pembukaan cabang pos baru.
+
+* /src/components/QrInventoryScanner.tsx  -- *DIPERBARUI*
+  Modul pemindai kamera (menggunakan jsQR) yang bertindak sebagai terminal stasioner 
+  penerimaan barang masuk (In) dan pengeluaran barang keluar (Out).
+
+* /src/components/NotificationSystem.tsx  -- *BARU*
+  Sistem alarm mengambang di pojok kanan bawah yang menyimulasikan transmisi radio 
+  / sinyal peringatan berkala tentang kondisi pangan dan bencana di desa 3T.
+
+--------------------------------------------------------------------------------
+2. RINCIAN FITUR YANG BARU DIIMPLEMENTASIKAN
+--------------------------------------------------------------------------------
+
+A. SISTEM NOTIFIKASI SIMULASI BERKALA (DENGAN ALARM DUA-NADA GENTLE)
+   * Terletak secara non-intrusif di pojok kanan bawah layar.
+   * Berfungsi sebagai sinyal radio pemantauan darurat desa-desa 3T.
+   * Menyimulasikan pembaruan otomatis setiap 4 hingga 8 detik pada kondisi normal.
+   * Menggunakan Web Audio API untuk membunyikan alarm melodi sines (E5 ke A5) yang 
+     lembut, memberi sinyal penting bagi operator tanpa merusak fokus kerja.
+   * Dilengkapi tombol "Sembunyikan" (Mute) dan tombol "Senapkan Alarm" (Volume Toggle) 
+     agar tetap ramah bagi pengguna di dalam toko.
+
+B. MODE SIMULASI KETIDAKSEIMBANGAN STOK (KRISIS 3T)
+   * Sebuah kartu kendali interaktif baru ditambahkan ke sidebar administratif.
+   * Saat diaktifkan (Mode Krisis Aktif):
+     1. Produksi panen lokal di desa-desa terluar (is3T) dipaksa turun drastis hingga 
+        tersisa 10% dari kebutuhan standar mereka, memicu kondisi defisit kritis.
+     2. Harga beras di desa tersebut meroket +45% akibat kelangkaan barang.
+     3. Stok di Gudang Pusat BULOG ditingkatkan hingga 98% kapasitas (Overstock).
+     4. Ini menciptakan 'Ketidakseimbangan Pasokan' (Imbalance) yang nyata di peta.
+     5. Frekuensi sinyal radio peringatan pada sistem notifikasi dipercepat menjadi 
+        setiap 2 hingga 4 detik sekali untuk mensimulasikan kepanikan pasar.
+   * Saat dinonaktifkan: Kondisi dipulihkan kembali ke data aliran pasokan standar.
+
+C. TERMINAL SCANNER DUA-ARAH: QR MASUK (IN) & QR KELUAR (OUT)
+   * Mengintegrasikan scanner penerimaan (stok masuk) dan pengeluaran (stok keluar) 
+     ke dalam satu modul stasioner yang sama untuk menghemat ruang monitor toko desa.
+   * Menggunakan pemilih tab sederhana:
+     - [QR MASUK (IN)]: Berfungsi menambahkan stok stockpile (+10kg, +20kg, +50kg) 
+       ke dalam Pusat Distribusi yang ditunjuk setelah pengiriman dari hulu tiba.
+     - [QR KELUAR (OUT)]: Berfungsi mengurangi stok beras lumbung karena disalurkan 
+       kepada masyarakat penerima manfaat (Bansos), lansia dhuafa, atau operasi pasar.
+   * Sistem Pengaman Stok Negatif (Stock Protection):
+     Jika operator mencoba memindai pengeluaran beras yang melebihi sisa kapasitas 
+     nyata gudang tersebut, sistem akan memblokir transaksi secara otomatis, 
+     menampilkan visual merah "TRANSAKSI BLOCKED", dan membunyikan nada alarm rendah.
+
+D. LAYAR PENUH (FULLSCREEN MODE) UNTUK WARGA DESA
+   * Menyediakan tombol "Layar Penuh (Fullscreen)" khusus saat warga desa atau 
+     petugas lokal ingin mengoperasikan terminal pengeluaran beras mandiri.
+   * Saat diaktifkan, modul scanner membesar ke seluruh viewport monitor (Immersive Fullscreen).
+   * Seluruh tipografi, tombol kontrol, dan tampilan kamera diperbesar secara signifikan 
+     sehingga sangat mudah dibaca oleh warga desa, orang tua, maupun anak-anak.
+   * Menyediakan daftar simulator pengeluaran mandiri berukuran raksasa sehingga warga 
+     bisa menekan tombol simulasi instan jika kamera sedang offline.
+   * Menampilkan struk verifikasi digital berukuran besar yang menyatakan "BARANG KELUAR 
+     BERHASIL TERVERIFIKASI" demi kejelasan hak bantuan warga.
+
+--------------------------------------------------------------------------------
+3. ALUR LOGIKA OPERASI DATA
+--------------------------------------------------------------------------------
+
+1. Penimbangan & Pemindaian:
+   Petugas/Warga mengarahkan kode QR karung beras ke kamera laptop/stasioner monitor.
+2. Pengenalan Payload:
+   Pustaka `jsQR` membaca bingkai data gambar dari kanvas video, mengekstrak JSON payload 
+   (mencakup `qrId`, `name`, `weightKg`, `grade`, `batchNo`).
+3. Validasi & Pengamanan:
+   - Jika mode OUT, sistem menghitung: (Stok Gudang Sekarang - Berat Karung).
+   - Jika hasil < 0, fungsi dihentikan, state log dicatat sebagai "INSUFFICIENT_STOCK", 
+     dan layar memunculkan peringatan.
+4. Mutasi Gudang & Notifikasi:
+   - Jika lolos validasi, state lumbung diperbarui secara reaktif menggunakan callback 
+     `onUpdateInventory`.
+   - Banner toast Koperasi muncul di layar utama: "QR Keluar Berhasil! Mendistribusikan 
+     X kg beras dari gudang logistik."
+5. Sinkronisasi Grafik & Peta:
+   `useEffect` mendeteksi mutasi stok tersebut, memperbarui visual peta lingkaran 
+   lumbung, grafik kapasitas, dan data volatilitas secara otomatis.
+
+================================================================================
+Koperasi Merah Putih - Mengamankan Pangan, Stabilisasi Harga, Menyejahterakan Rakyat.
+================================================================================

@@ -18,6 +18,7 @@ import ScmCharts from "./components/ScmCharts";
 import SignIn from "./components/SignIn";
 import CooperativeGovernance from "./components/CooperativeGovernance";
 import QrInventoryScanner from "./components/QrInventoryScanner";
+import NotificationSystem from "./components/NotificationSystem";
 import {
   LayoutDashboard,
   Database,
@@ -80,6 +81,47 @@ export default function App() {
   >("MAP_MONITOR");
   const [activePreset, setActivePreset] = useState<PresetType>("STANDARD");
   const [safetyBufferScale, setSafetyBufferScale] = useState<number>(1.35);
+  const [isImbalanceModeActive, setIsImbalanceModeActive] = useState<boolean>(false);
+
+  const handleToggleImbalanceMode = () => {
+    setIsImbalanceModeActive(prev => {
+      const next = !prev;
+      if (next) {
+        // Trigger severe imbalance condition
+        // 1. Cut the production of 3T villages (e.g., Sembalun & Gili) to create severe shortages
+        setVillages(currentVillages => currentVillages.map(v => {
+          if (v.is3T) {
+            return {
+              ...v,
+              aggregateProductionKgPerDay: Math.round(v.population * v.consumptionPerCapitaKgPerDay * 0.1), // drop production to 10% of demand (huge shortage!)
+              currentPricePerKgIdr: Math.round(v.currentPricePerKgIdr * 1.45) // price spikes by 45% due to extreme scarcity!
+            };
+          }
+          return v;
+        }));
+        
+        // 2. Set one of the safe central Distribution Centers to near-capacity (overstocked)
+        setDcs(currentDcs => currentDcs.map(dc => {
+          if (dc.operator === "BULOG" || dc.id === "dc-mataram") {
+            return {
+              ...dc,
+              riceInventoryKg: Math.round(dc.capacityKg * 0.98) // Overstocked at 98%
+            };
+          }
+          return dc;
+        }));
+        
+        setToastMessage("⚠️ Mode Ketidakseimbangan Aktif! Beberapa wilayah 3T mengalami kelangkaan parah, sementara gudang pusat penuh (overstock). Frekuensi sinyal peringatan dipercepat.");
+      } else {
+        // Reset to Standard Pasokan
+        setVillages(INITIAL_VILLAGES);
+        setDcs(INITIAL_DCS);
+        setToastMessage("🌾 Mode Ketidakseimbangan Dimatikan. Memulihkan aliran pasokan pangan standar.");
+      }
+      setTimeout(() => setToastMessage(null), 5000);
+      return next;
+    });
+  };
 
   // Dynamic Multi-Modal shipments state
   const [transitLogs, setTransitLogs] = useState<TransitLog[]>([
@@ -443,9 +485,12 @@ export default function App() {
     setDcs((prev) =>
       prev.map((d) => {
         if (d.id === dcId) {
-          const newInventory = Math.min(
-            d.capacityKg,
-            d.riceInventoryKg + itemWeightKg,
+          const newInventory = Math.max(
+            0,
+            Math.min(
+              d.capacityKg,
+              d.riceInventoryKg + itemWeightKg,
+            ),
           );
           return {
             ...d,
@@ -455,9 +500,15 @@ export default function App() {
         return d;
       }),
     );
-    setToastMessage(
-      `📦 Scan QR Berhasil! Menambahkan +${itemWeightKg} kg stockpile (${itemName}) ke gudang logistik.`,
-    );
+    if (itemWeightKg >= 0) {
+      setToastMessage(
+        `📦 Scan QR Berhasil! Menambahkan +${itemWeightKg} kg stockpile (${itemName}) ke gudang logistik.`,
+      );
+    } else {
+      setToastMessage(
+        `📤 QR Keluar Berhasil! Mendistribusikan ${Math.abs(itemWeightKg)} kg beras (${itemName}) dari gudang logistik.`,
+      );
+    }
     setTimeout(() => setToastMessage(null), 4000);
   };
 
@@ -819,6 +870,45 @@ export default function App() {
             <p className="text-[10px] text-slate-450 leading-relaxed pt-1 select-none text-slate-400">
               Klik untuk memicu skenario. Indeks volatilitas dan parameter
               logistik akan memperbarui peta seketika.
+            </p>
+          </div>
+
+          {/* Stock Imbalance Simulation Toggle Card */}
+          <div className={`rounded-2xl border p-4 shadow-sm space-y-3 transition-all duration-300 ${
+            isImbalanceModeActive 
+              ? "bg-red-50/50 border-red-300 shadow-red-100" 
+              : "bg-white border-slate-200"
+          }`}>
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">
+                Simulasi Ketidakseimbangan
+              </span>
+              <span className={`w-2 h-2 rounded-full ${isImbalanceModeActive ? "bg-red-500 animate-pulse" : "bg-slate-300"}`} />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Mode Krisis 3T</span>
+                <span className="text-[10px] text-slate-500">Imbalance Stok & Defisit Pangan</span>
+              </div>
+              
+              {/* Toggle Switch */}
+              <button
+                onClick={handleToggleImbalanceMode}
+                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 outline-none cursor-pointer flex items-center ${
+                  isImbalanceModeActive ? "bg-red-600" : "bg-slate-300"
+                }`}
+              >
+                <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${
+                  isImbalanceModeActive ? "translate-x-5" : "translate-x-0"
+                }`} />
+              </button>
+            </div>
+
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {isImbalanceModeActive 
+                ? "⚠️ Memaksa wilayah 3T masuk kondisi krisis kelangkaan beras parah (-90% panen lokal) untuk mementaskan ketimpangan stok."
+                : "💡 Aktifkan untuk menyimulasikan ketidakseimbangan pasokan (kelangkaan vs overstock) dan mempercepat sinyal alarm."}
             </p>
           </div>
 
@@ -2092,6 +2182,12 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Notification System */}
+      <NotificationSystem
+        villages={villages}
+        isImbalanceModeActive={isImbalanceModeActive}
+      />
     </div>
   );
 }
